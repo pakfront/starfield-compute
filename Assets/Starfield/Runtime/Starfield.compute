@@ -1,0 +1,94 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+#define ThreadBlockSize 256
+
+// uint MaxParticles;
+
+
+struct Particle {
+    float3 CurrentPosition;
+    float3 OldPosition;
+    float3 Velocity;
+    float3 Color;
+    float Scale;
+};
+
+struct Attractor {
+    float3 Position;
+    float3 Destination;
+    float3 Color;
+    float Velocity;
+    float Strength;
+    float MinAttractorDistance;
+};
+
+RWStructuredBuffer<Particle> _SrcParticleBuffer;
+RWStructuredBuffer<Attractor> _AttractorsBuffer;
+
+float _timeStep;
+uint _attractorCount;
+
+[numthreads(ThreadBlockSize, 1, 1)]
+
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+	const unsigned int index = id.x;
+
+    //    uint id = dispatchId.x + ( GroupDimX * 1024 * dispatchId.y ) 
+    //     + ( GroupDimX * GroupDimY * 1024 * dispatchId.z );
+
+    //Every thread renders a particle.
+    //If there are more threads than particles then stop here.
+    // if(id < MaxParticles){
+        Particle p = _SrcParticleBuffer[index];
+        float3 a = float3(0.0f,0.0f,0.0f);
+        float3 color = p.Color;
+        for (uint i=0;i<_attractorCount;++i) {
+            float3 diff = _AttractorsBuffer[i].Position - p.CurrentPosition;
+            float distance = length( diff );
+
+            if ( distance < 
+                    _AttractorsBuffer[i].MinAttractorDistance ) {
+                // make sure particles don't appear inside an 
+                // attractors min distance. If a particle
+                // gets inside the min distance, we'll push it 
+                // to the opposite side of the min sphere
+                // This reduces large numbers of particles
+                // converging in a point around an attractor
+
+                float3 push = diff + 
+                    normalize( diff ) 
+                    * _AttractorsBuffer[i].MinAttractorDistance;
+                p.OldPosition += push;
+                p.CurrentPosition += push;
+            }
+
+            a += ( diff * _AttractorsBuffer[i].Strength ) 
+                / (distance * distance);
+
+            // color = lerp(color,_AttractorsBuffer[i].Color, _AttractorsBuffer[i].Strength/(distance*distance));
+        }
+
+        float3 v = (p.CurrentPosition - p.OldPosition) / _timeStep;
+        v += a*_timeStep*_timeStep;
+        float speed = length(v);
+        v /= speed;
+         // speed = 0;// clamp(speed,0, 0.00001);
+        v *= speed;
+        float3 tempPos = p.CurrentPosition + v * _timeStep;
+
+        // float3 tempPos = 2.0*p.CurrentPosition 
+        //     - p.OldPosition + a*_timeStep*_timeStep;
+
+        
+        // float3 tempPos = p.CurrentPosition +  a*_timeStep*_timeStep;
+
+        p.OldPosition = p.CurrentPosition;
+        p.CurrentPosition = tempPos;
+        p.Velocity = p.CurrentPosition - p.OldPosition;
+        p.Color = color;
+
+        _SrcParticleBuffer[index] = p;
+    // }
+}
